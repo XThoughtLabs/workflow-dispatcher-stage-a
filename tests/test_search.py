@@ -176,3 +176,51 @@ def test_search_is_ascii_case_insensitive(client, q, expected):
     }
     wanted = [created[name] for name in created if name in expected]
     assert search(client, "admin", q) == (wanted, len(wanted))
+
+
+# --- only ASCII letters are folded: every other character matches only itself (#3) ----
+
+@pytest.mark.parametrize(("q", "found"), [
+    ("Über", True),
+    ("ÉTÉ", True),
+    ("ÄRZTE", True),
+    ("ÜBERprüfung", True),
+    ("berpr", True),
+    ("BERPR", True),
+    ("über", False),
+    ("ärzte", False),
+], ids=["capital-u-umlaut", "capital-e-acute", "capital-a-umlaut-description", "capital-u-umlaut-mixed",
+        "ascii-lower", "ascii-upper", "small-u-umlaut", "small-a-umlaut-description"])
+def test_non_ascii_capital_in_q_finds_the_text_as_written(client, q, found):
+    task = create(client, "alice", "Überprüfung ÉTÉ 2026", description="Prüfbericht für ÄRZTE")
+    assert search(client, "alice", q) == (([task], 1) if found else ([], 0))
+
+
+def test_non_ascii_letters_of_either_case_find_only_their_own_task(client):
+    # Two tasks that differ only in the case of their non-ASCII letters: each q finds the
+    # task that holds its non-ASCII letters exactly as written, whatever the case of its
+    # ASCII letters.
+    capital = create(client, "alice", "Überprüfung ÉTÉ 2026", description="Prüfbericht für ÄRZTE")
+    small = create(client, "alice", "überprüfung été 2026", description="prüfbericht für ärzte")
+    cases = {
+        "Über": [capital], "ÜBER": [capital], "über": [small], "üBER": [small],
+        "ÉTÉ": [capital], "ÉtÉ": [capital], "été": [small], "éTé": [small],
+        "ÄRZTE": [capital], "Ärzte": [capital], "ärzte": [small], "äRZTE": [small],
+        "BERPRÜFUNG": [], "berprüfung": [capital, small], "BERPRüFUNG": [capital, small],
+    }
+    found = {q: search(client, "alice", q) for q in cases}
+    assert found == {q: (ids, len(ids)) for q, ids in cases.items()}
+
+
+@pytest.mark.parametrize(("letter", "folded", "special", "lookalike"), [
+    ("\u212a", "k", "300 \u212a", "Kilo"),
+    ("\u0130", "i", "\u0130stanbul", "istanbul"),
+], ids=["kelvin-sign", "capital-i-with-dot"])
+def test_non_ascii_letter_that_str_lower_changes_matches_only_itself(client, letter, folded, special, lookalike):
+    # str.lower() turns the Kelvin sign U+212A into the ASCII k, and the capital I with dot
+    # U+0130 into i and a combining dot; neither is an ASCII letter, so each matches only itself.
+    special_task = create(client, "alice", special)
+    lookalike_task = create(client, "alice", lookalike)
+    assert search(client, "alice", letter) == ([special_task], 1)
+    assert search(client, "alice", folded) == ([lookalike_task], 1)
+    assert search(client, "alice", lookalike) == ([lookalike_task], 1)

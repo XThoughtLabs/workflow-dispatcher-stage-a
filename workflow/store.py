@@ -128,6 +128,9 @@ FROM status_history WHERE task_id = :task_id
 # the tasks they created or are assigned. :query is a literal substring of the title or
 # description: instr has no wildcard or escape character, so %, _ and \ match only
 # themselves, and lower() folds ASCII letters only. An empty :query is in every text.
+# :query is bound as the caller wrote it, so the same lower() folds both sides; str.lower()
+# folds other letters too (Ü to ü, the Kelvin sign to k), and a title holding Ü could not be
+# found by the Ü it was written with (#3).
 VISIBLE_TASKS = """
 SELECT * FROM tasks
 WHERE (:all_tasks OR creator_id = :user_id OR assignee_id = :user_id)
@@ -255,7 +258,7 @@ class Store:
         params = {
             "all_tasks": user["role"] in ("admin", "observer"),
             "user_id": user["id"],
-            "query": query.lower(),
+            "query": query,
         }
         with self.connect() as conn:
             return [dict(row) for row in conn.execute(VISIBLE_TASKS, params)]
